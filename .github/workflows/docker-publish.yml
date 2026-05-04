@@ -1,0 +1,77 @@
+name: Build and Push Trackio Image
+
+on:
+  schedule:
+    - cron: '0 2 * * 1' # Every Monday at 2:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Get Latest trackio Version
+      id: get-version
+      run: |
+        LATEST_TAG=$(curl -s https://api.github.com/repos/gradio-app/trackio/releases/latest | jq -r '.tag_name')
+        # Tag format is usually 'trackio@0.25.1' or 'v0.25.1'. Let's strip 'trackio@' or 'v'
+        VERSION=${LATEST_TAG#trackio@}
+        VERSION=${VERSION#v}
+        echo "Latest upstream version: $VERSION"
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Get Current version from Dockerfile
+      id: current-version
+      run: |
+        CURRENT_VERSION=$(grep 'ARG TRACKIO_VERSION=' Dockerfile | cut -d'=' -f2)
+        echo "Current Dockerfile version: $CURRENT_VERSION"
+        echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
+
+    - name: Check if versions match
+      id: check-version
+      run: |
+        if [ "${{ env.VERSION }}" != "${{ env.CURRENT_VERSION }}" ]; then
+          echo "Versions differ. Needs update."
+          echo "needs_update=true" >> $GITHUB_OUTPUT
+        else
+          echo "Versions match. No update needed."
+          echo "needs_update=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Update Dockerfile version
+      if: steps.check-version.outputs.needs_update == 'true'
+      run: |
+        sed -i "s|ARG TRACKIO_VERSION=.*|ARG TRACKIO_VERSION=${{ env.VERSION }}|" Dockerfile
+
+    - name: Commit and Push Dockerfile Update
+      if: steps.check-version.outputs.needs_update == 'true'
+      run: |
+        git config --global user.name "github-actions"
+        git config --global user.email "github-actions@github.com"
+        git add Dockerfile
+        git commit -m "Update trackio base version to ${{ env.VERSION }}" || echo "No changes to commit"
+        git push origin HEAD
+
+    - name: Log in to Docker Hub
+      if: steps.check-version.outputs.needs_update == 'true'
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Build and Push Docker Image
+      if: steps.check-version.outputs.needs_update == 'true'
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: |
+          ziadloo/trackio:${{ env.VERSION }}
+          ziadloo/trackio:latest
