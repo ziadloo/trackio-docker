@@ -27,31 +27,24 @@ jobs:
         echo "VERSION=$VERSION" >> $GITHUB_ENV
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-    - name: Get Current version from Dockerfile
-      id: current-version
+    - name: Check if image already exists on my Docker Hub
+      id: check-image
       run: |
-        CURRENT_VERSION=$(grep 'ARG TRACKIO_VERSION=' Dockerfile | cut -d'=' -f2)
-        echo "Current Dockerfile version: $CURRENT_VERSION"
-        echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
-
-    - name: Check if versions match
-      id: check-version
-      run: |
-        if [ "${{ env.VERSION }}" != "${{ env.CURRENT_VERSION }}" ]; then
-          echo "Versions differ. Needs update."
-          echo "needs_update=true" >> $GITHUB_OUTPUT
+        if curl --silent --fail "https://hub.docker.com/v2/repositories/ziadloo/trackio/tags/${{ env.VERSION }}/"; then
+          echo "Image already exists for version $VERSION."
+          echo "exists=true" >> $GITHUB_OUTPUT
         else
-          echo "Versions match. No update needed."
-          echo "needs_update=false" >> $GITHUB_OUTPUT
+          echo "Image does not exist."
+          echo "exists=false" >> $GITHUB_OUTPUT
         fi
 
     - name: Update Dockerfile version
-      if: steps.check-version.outputs.needs_update == 'true'
+      if: steps.check-image.outputs.exists == 'false'
       run: |
         sed -i "s|ARG TRACKIO_VERSION=.*|ARG TRACKIO_VERSION=${{ env.VERSION }}|" Dockerfile
 
     - name: Commit and Push Dockerfile Update
-      if: steps.check-version.outputs.needs_update == 'true'
+      if: steps.check-image.outputs.exists == 'false'
       run: |
         git config --global user.name "github-actions"
         git config --global user.email "github-actions@github.com"
@@ -60,14 +53,14 @@ jobs:
         git push origin HEAD
 
     - name: Log in to Docker Hub
-      if: steps.check-version.outputs.needs_update == 'true'
+      if: steps.check-image.outputs.exists == 'false'
       uses: docker/login-action@v3
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
     - name: Build and Push Docker Image
-      if: steps.check-version.outputs.needs_update == 'true'
+      if: steps.check-image.outputs.exists == 'false'
       uses: docker/build-push-action@v5
       with:
         context: .
