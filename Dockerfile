@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-ARG TRACKIO_VERSION=0.30.3
+ARG TRACKIO_VERSION=0.31.5
 
 RUN pip install --no-cache-dir trackio==${TRACKIO_VERSION}
 
